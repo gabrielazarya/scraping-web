@@ -8,18 +8,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# fungsi auto scroll
-def scroll_page(driver, pause_time=1):
-    last_height = driver.execute_script("return document.body.scrollHeight")
-    while True:
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(pause_time)
-        new_height = driver.execute_script("return document.body.scrollHeight")
-        if new_height == last_height:
-            break
-        last_height = new_height
-
-# input URL
 url = input("Masukkan URL ulasan Tokopedia (yang /review): ")
 
 if url:
@@ -28,6 +16,7 @@ if url:
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     driver.get(url)
 
+    # tunggu sampai artikel ulasan muncul
     WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "article.css-15m2bcr"))
     )
@@ -37,32 +26,29 @@ if url:
     while True:
         time.sleep(2)
 
-        # scroll supaya review muncul
-        scroll_page(driver, pause_time=2)
-
-        # klik semua tombol "Selengkapnya"
-        buttons = driver.find_elements(By.XPATH, "//button[contains(text(), 'Selengkapnya')]")
+        # klik semua "Selengkapnya"
+        buttons = driver.find_elements(By.XPATH, "//button[contains(., 'Selengkapnya')]")
         for btn in buttons:
             try:
                 driver.execute_script("arguments[0].click();", btn)
             except:
                 continue
 
-        # ambil semua ulasan di halaman ini
-        reviews = driver.find_elements(By.CSS_SELECTOR, "p[data-testid='lblItemUlasan']")
+        # ambil semua ulasan (pakai span, bukan p)
+        reviews = driver.find_elements(By.CSS_SELECTOR, "span[data-testid='lblItemUlasan']")
         for r in reviews:
             text = r.text.strip()
-            if text and text not in data:
+            if text and text not in data:  # hindari duplikat
                 data.append(text)
 
-        # klik tombol "Laman berikutnya" kalau ada
+        # klik "Laman berikutnya" kalau ada
         try:
             next_button = WebDriverWait(driver, 5).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label^='Laman berikutnya']"))
             )
             driver.execute_script("arguments[0].click();", next_button)
 
-            # tunggu sampai halaman review berikutnya muncul
+            # tunggu halaman baru termuat
             WebDriverWait(driver, 10).until(
                 EC.presence_of_all_elements_located((By.CSS_SELECTOR, "article.css-15m2bcr"))
             )
@@ -72,9 +58,8 @@ if url:
 
     driver.quit()
 
-    # simpan hasil ke CSV
+    # simpan CSV
     os.makedirs("sistem_rekomendasi/ulasan", exist_ok=True)
     df = pd.DataFrame(data, columns=["Ulasan"])
-    df.to_csv("sistem_rekomendasi/ulasan/ulasan1.csv", index=False, encoding="utf-8-sig")
-
+    df.to_csv("sistem_rekomendasi/ulasan/ulasan3.csv", index=False, encoding="utf-8-sig")
     print("Data berhasil disimpan, total:", len(data))
