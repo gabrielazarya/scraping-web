@@ -61,5 +61,5 @@ if url:
     # simpan CSV
     os.makedirs("sistem_rekomendasi/ulasan", exist_ok=True)
     df = pd.DataFrame(data, columns=["Ulasan"])
-    df.to_csv("sistem_rekomendasi/ulasan/ulasan38.csv", index=False, encoding="utf-8-sig")
+    df.to_csv("sistem_rekomendasi/ulasan/ulasan50.csv", index=False, encoding="utf-8-sig")
     print("Data berhasil disimpan, total:", len(data))
