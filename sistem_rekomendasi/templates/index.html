@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Periksa Keaslian Produk Tokopedia</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>Periksa Keaslian Produk Toko</h1>
+    <p>~ Tokopedia ~</p>
+    <div class="input-box">
+      <form id="form">
+        <input type="text" id="url" name="url" placeholder="Tempelkan Link URL Review Produk Tokopedia" required>
+        <button type="submit">Mulai</button>
+      </form>
+    </div>
+
+    <div id="result" style="display:none;">
+      <h3>Hasil Analisis</h3>
+      <table id="tabel"></table>
+      <img id="chart" />
+      <h2 id="hasil"></h2>
+    </div>
+  </div>
+
+  <script>
+  document.getElementById("form").addEventListener("submit", async e=>{
+    e.preventDefault();
+    const res = await fetch("/predict",{method:"POST",body:new FormData(e.target)});
+    const data = await res.json();
+    if(data.error){alert(data.error);return;}
+    document.getElementById("result").style.display="block";
+    let t="<tr><th>Komentar</th><th>Label</th></tr>";
+    data.data.slice(0,10).forEach(r=>{t+=`<tr><td>${r.komentar}</td><td>${r.label}</td></tr>`});
+    document.getElementById("tabel").innerHTML=t;
+    document.getElementById("chart").src="data:image/png;base64,"+data.grafik;
+    document.getElementById("hasil").innerHTML=`${data.hasil}`;
+  });
+  </script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+body {
+  font-family: Poppins, sans-serif;
+  background-color: #efefef;
+  text-align: center;
+  color: #222;
+}
+.container {
+  width: 80%;
+  margin: auto;
+  padding: 30px;
+}
+.input-box {
+  background: linear-gradient(90deg, #8a00ff, #e500ff);
+  padding: 20px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+}
+input[type=text] {
+  width: 70%;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+}
+button {
+  padding: 10px 20px;
+  background: white;
+  color: purple;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+}
+th, td {
+  border: 1px solid #ddd;
+  padding: 10px;
+}
+th {
+  background: #f5f5f5;
+}

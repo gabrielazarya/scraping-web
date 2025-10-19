@@ -6,7 +6,7 @@ import os
 # ==============================
 # 1️⃣ BACA DATA LABELED
 # ==============================
-input_path = 'sistem_rekomendasi/hasil_preprocessing/5199_data_komentar_labeled.xlsx'
+input_path = 'sistem_rekomendasi/hasil_preprocessing/all_data_labeled.xlsx'
 df = pd.read_excel(input_path)
 
 # Pastikan kolom 'cleaned' dan 'label' ada

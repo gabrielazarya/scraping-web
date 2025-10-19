@@ -13,7 +13,7 @@ from tensorflow.keras.layers import Embedding, LSTM, Dense, Dropout
 # ==============================
 # 1️⃣ LOAD DATA DAN MODEL
 # ==============================
-data_path = 'sistem_rekomendasi/hasil_preprocessing/5199_data_komentar_labeled.xlsx'
+data_path = 'sistem_rekomendasi/hasil_preprocessing/all_data_labeled.xlsx'
 w2v_path = 'sistem_rekomendasi/model_word2vec/word2vec_tokopedia.model'
 
 df = pd.read_excel(data_path)
