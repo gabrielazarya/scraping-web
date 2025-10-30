@@ -7,6 +7,8 @@ from gensim.models import Word2Vec
 from sklearn.model_selection import KFold
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils import shuffle
+from sklearn.metrics import confusion_matrix, classification_report
+from imblearn.over_sampling import SMOTE
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential
@@ -33,9 +35,9 @@ def signal_handler(sig, frame):
     global stop_training
     stop_training = True
     print("\n[INFO] Perintah berhenti diterima. Akan menghentikan setelah batch ini...")
+
 signal.signal(signal.SIGINT, signal_handler)
 
-# Callback custom untuk hentikan saat sinyal diterima
 class GracefulStopCallback(Callback):
     def on_batch_end(self, batch, logs=None):
         if stop_training:
@@ -48,22 +50,38 @@ class GracefulStopCallback(Callback):
 df = pd.read_excel(DATA_PATH)[['cleaned', 'label']].dropna()
 df = df.drop_duplicates(subset=['cleaned'])
 df = shuffle(df, random_state=42).reset_index(drop=True)
+
 texts = df['cleaned'].astype(str).tolist()
 labels = df['label'].tolist()
 
 # Label encoding
 label_encoder = LabelEncoder()
-y = to_categorical(label_encoder.fit_transform(labels))
+y_raw = label_encoder.fit_transform(labels)
+class_names = label_encoder.classes_
+print("[INFO] Kelas terdeteksi:", class_names)
 
 # Tokenisasi
 tokenizer = Tokenizer()
 tokenizer.fit_on_texts(texts)
-X = tokenizer.texts_to_sequences(texts)
-max_len = max(len(x) for x in X)
-X = pad_sequences(X, maxlen=max_len, padding='post')
+X_seq = tokenizer.texts_to_sequences(texts)
+max_len = max(len(x) for x in X_seq)
+X = pad_sequences(X_seq, maxlen=max_len, padding='post')
 
 # ======================================================
-# 2️⃣ LOAD WORD2VEC
+# 2️⃣ BALANCING DATA DENGAN SMOTE
+# ======================================================
+print("[INFO] Sebelum SMOTE (count per class):", np.bincount(y_raw))
+smote = SMOTE(random_state=42, k_neighbors=3)
+X_flat = X.reshape(X.shape[0], -1)
+X_res_flat, y_res = smote.fit_resample(X_flat, y_raw)
+X_res = X_res_flat.reshape(X_res_flat.shape[0], max_len)
+print("[INFO] Setelah SMOTE (count per class):", np.bincount(y_res))
+
+# One-hot encode labels untuk Keras
+y = to_categorical(y_res)
+
+# ======================================================
+# 3️⃣ LOAD WORD2VEC
 # ======================================================
 w2v = Word2Vec.load(WORD2VEC_MODEL)
 embedding_dim = w2v.vector_size
@@ -74,7 +92,7 @@ for word, i in tokenizer.word_index.items():
         embedding_matrix[i] = w2v.wv[word]
 
 # ======================================================
-# 3️⃣ GRID PARAMETER & K
+# 4️⃣ GRID PARAMETER & K
 # ======================================================
 k_values = [3, 5, 10]
 epoch_list = [10, 20, 30]
@@ -89,7 +107,7 @@ for K in k_values:
                 param_grid.append({'k': K, 'epoch': e, 'batch': b, 'dropout': d})
 
 # ======================================================
-# 4️⃣ FUNGSI PEMBUATAN MODEL
+# 5️⃣ FUNGSI PEMBUATAN MODEL
 # ======================================================
 def build_model(dropout):
     model = Sequential([
@@ -97,7 +115,7 @@ def build_model(dropout):
                   output_dim=embedding_dim,
                   weights=[embedding_matrix],
                   input_length=max_len,
-                  trainable=False),
+                  trainable=True),
         LSTM(128),
         Dropout(dropout),
         Dense(y.shape[1], activation='softmax')
@@ -108,7 +126,7 @@ def build_model(dropout):
     return model
 
 # ======================================================
-# 5️⃣ RESUME HANDLER
+# 6️⃣ RESUME HANDLER
 # ======================================================
 if os.path.exists(CSV_LOG_PATH):
     resume = input("Lanjut dari resume terakhir? (y/n): ").strip().lower()
@@ -130,7 +148,7 @@ else:
     start_index = 0
 
 # ======================================================
-# 6️⃣ PROSES TRAINING DENGAN MULTI-KFOLD
+# 7️⃣ PROSES TRAINING DENGAN MULTI-KFOLD + CONFUSION MATRIX
 # ======================================================
 for idx, params in enumerate(param_grid, start=1):
     if stop_training:
@@ -138,7 +156,7 @@ for idx, params in enumerate(param_grid, start=1):
         break
 
     if idx <= start_index:
-        continue  # lewati kombinasi yang sudah selesai sebelumnya
+        continue
 
     k = params['k']
     epoch = params['epoch']
@@ -152,14 +170,14 @@ for idx, params in enumerate(param_grid, start=1):
     kf = KFold(n_splits=k, shuffle=True, random_state=42)
     fold_idx = 0
 
-    for train_idx, val_idx in kf.split(X):
+    for train_idx, val_idx in kf.split(X_res):
         fold_idx += 1
         if stop_training:
             print("[INFO] Training dihentikan saat dalam fold.")
             break
 
         print(f"\nMemulai Fold {fold_idx}/{k} untuk kombinasi ke-{idx}")
-        X_train, X_val = X[train_idx], X[val_idx]
+        X_train, X_val = X_res[train_idx], X_res[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
 
         model = build_model(dropout)
@@ -181,12 +199,30 @@ for idx, params in enumerate(param_grid, start=1):
         train_loss = history.history['loss'][-1]
         val_loss = history.history['val_loss'][-1]
 
+        # ✅ Tambahan evaluasi: Confusion Matrix dan Classification Report
+        y_pred_probs = model.predict(X_val)
+        y_pred = np.argmax(y_pred_probs, axis=1)
+        y_true = np.argmax(y_val, axis=1)
+
+        cm = confusion_matrix(y_true, y_pred)
+        report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
+
+        print("\n=== CONFUSION MATRIX ===")
+        print(cm)
+        print("\n=== CLASSIFICATION REPORT ===")
+        print(pd.DataFrame(report).transpose())
+
+        # Simpan juga confusion matrix ke CSV per kombinasi
+        cm_path = os.path.join(OUTPUT_DIR, f'confusion_K{k}_F{fold_idx}_E{epoch}_B{batch}_D{dropout}.csv')
+        pd.DataFrame(cm, index=class_names, columns=class_names).to_csv(cm_path)
+        print(f"Confusion matrix disimpan: {cm_path}")
+
         # Simpan model
         model_path = os.path.join(OUTPUT_DIR, f'model_K{k}_F{fold_idx}_E{epoch}_B{batch}_D{dropout}.keras')
         model.save(model_path)
-        print(f"Model disimpan: {model_path} (format .keras)")
+        print(f"Model disimpan: {model_path}")
 
-        # Simpan hasil CSV secara real-time
+        # Simpan hasil ke CSV real-time
         df_log.loc[len(df_log)] = [
             k, fold_idx, epoch, batch, dropout,
             round(train_acc, 4), round(val_acc, 4),

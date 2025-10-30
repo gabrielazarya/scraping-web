@@ -99,5 +99,5 @@ output_full = os.path.join(output_dir, 'data_komentar_full_labeled.xlsx')
 df[['komentar', 'cleaned_text', 'casefolded', 'tokens',
     'normalized', 'stemmed', 'cleaned', 'label']].to_excel(output_full, index=False, engine='openpyxl')
 
-print(f"\n✅ File disimpan sebagai: {output_full}")
+print(f"\nFile disimpan sebagai: {output_full}")
 print("   Kolom 'label' siap diisi manual (asli/palsu).")

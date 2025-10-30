@@ -7,6 +7,7 @@ from gensim.models import Word2Vec
 from sklearn.model_selection import KFold
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils import shuffle
+from sklearn.metrics import classification_report, confusion_matrix
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential
@@ -35,7 +36,6 @@ def signal_handler(sig, frame):
     print("\n[INFO] Perintah berhenti diterima. Akan menghentikan setelah batch ini...")
 signal.signal(signal.SIGINT, signal_handler)
 
-# Callback custom untuk hentikan saat sinyal diterima
 class GracefulStopCallback(Callback):
     def on_batch_end(self, batch, logs=None):
         if stop_training:
@@ -93,11 +93,13 @@ for K in k_values:
 # ======================================================
 def build_model(dropout):
     model = Sequential([
-        Embedding(input_dim=len(tokenizer.word_index) + 1,
-                  output_dim=embedding_dim,
-                  weights=[embedding_matrix],
-                  input_length=max_len,
-                  trainable=False),
+        Embedding(
+            input_dim=len(tokenizer.word_index) + 1,
+            output_dim=embedding_dim,
+            weights=[embedding_matrix],
+            input_length=max_len,
+            trainable=True  # diubah menjadi trainable=True
+        ),
         LSTM(128),
         Dropout(dropout),
         Dense(y.shape[1], activation='softmax')
@@ -138,7 +140,7 @@ for idx, params in enumerate(param_grid, start=1):
         break
 
     if idx <= start_index:
-        continue  # lewati kombinasi yang sudah selesai sebelumnya
+        continue
 
     k = params['k']
     epoch = params['epoch']
@@ -174,6 +176,17 @@ for idx, params in enumerate(param_grid, start=1):
             callbacks=[GracefulStopCallback()]
         )
         duration = time.time() - start_time
+
+        # Prediksi & evaluasi tambahan
+        y_pred = model.predict(X_val)
+        y_pred_classes = np.argmax(y_pred, axis=1)
+        y_true_classes = np.argmax(y_val, axis=1)
+
+        print("\n[Classification Report]")
+        print(classification_report(y_true_classes, y_pred_classes, target_names=label_encoder.classes_))
+
+        print("[Confusion Matrix]")
+        print(confusion_matrix(y_true_classes, y_pred_classes))
 
         # Ambil hasil akhir
         train_acc = history.history['accuracy'][-1]
