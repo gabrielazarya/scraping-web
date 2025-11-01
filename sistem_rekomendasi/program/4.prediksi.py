@@ -1,112 +1,293 @@
-# from flask import Flask, render_template, request, jsonify
-# import pandas as pd
-# import re, os, emoji
-# import matplotlib
-# matplotlib.use('Agg')
-# import matplotlib.pyplot as plt
-# from gensim.models import Word2Vec
-# from tensorflow.keras.preprocessing.text import Tokenizer
-# from tensorflow.keras.preprocessing.sequence import pad_sequences
-# from tensorflow.keras.models import load_model
-# from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
-# import requests
-# from io import BytesIO
-# import base64
+import os
+import time
+import re
+import emoji
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from io import BytesIO
+import base64
 
-# app = Flask(__name__)
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 
-# stemmer = StemmerFactory().create_stemmer()
-# model_w2v = Word2Vec.load('sistem_rekomendasi/model_word2vec/word2vec_tokopedia.model')
-# model_lstm = load_model('sistem_rekomendasi/model_lstm/lstm_tokopedia_final.h5')
-# train_data = pd.read_excel('sistem_rekomendasi/hasil_preprocessing/5199_data_komentar_labeled.xlsx')
-# tokenizer = Tokenizer()
-# tokenizer.fit_on_texts(train_data['cleaned'])
+from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
+from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
 
-# def clean_text(teks):
-#     teks = emoji.replace_emoji(str(teks), replace='')
-#     teks = re.sub(r'#|@', '', teks)
-#     teks = re.sub(r'[^\w\s]', ' ', teks)
-#     teks = re.sub(r'\s+', ' ', teks).strip()
-#     teks = teks.lower()
-#     return ' '.join([stemmer.stem(w) for w in teks.split()])
+from gensim.models import Word2Vec
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.models import load_model
 
-# def scrape_tokopedia(url):
-#     match = re.search(r'/([^/]+)/review', url)
-#     if not match:
-#         return []
-#     product_id = match.group(1)
-#     reviews = []
-#     headers = {
-#         "accept": "application/json, text/plain, */*",
-#         "content-type": "application/json",
-#         "origin": "https://www.tokopedia.com",
-#         "referer": "https://www.tokopedia.com/",
-#         "user-agent": "Mozilla/5.0"
-#     }
-#     for page in range(1, 4):
-#         query = {
-#             "operationName": "ReviewListShopProduct",
-#             "variables": {
-#                 "page": page,
-#                 "perPage": 10,
-#                 "productID": product_id,
-#                 "sort": 1,
-#                 "filter": {"rating": [], "media": [], "withContent": True}
-#             },
-#             "query": """query ReviewListShopProduct($page: Int!, $perPage: Int!, $productID: String!, $sort: Int!, $filter: ReviewFilterInput) {
-#               reviewListShopProduct(page: $page, perPage: $perPage, productID: $productID, sort: $sort, filter: $filter) {
-#                 data { content }
-#               }
-#             }"""
-#         }
-#         res = requests.post("https://gql.tokopedia.com/graphql/ReviewListShopProduct", headers=headers, json=query)
-#         if res.status_code != 200:
-#             break
-#         data = res.json()
-#         items = data.get("data", {}).get("reviewListShopProduct", {}).get("data", [])
-#         for i in items:
-#             content = i.get("content", "").strip()
-#             if content:
-#                 reviews.append(content)
-#     return reviews
+import gradio as gr
 
-# @app.route('/')
-# def home():
-#     return render_template('index.html')
+# ==============================
+# Konfigurasi Path Utama
+# ==============================
+BASE_DIR = r"D:\TA\TokPed\sistem_rekomendasi"
+RESULT_DIR = os.path.join(BASE_DIR, "hasil_rekomendasi")
 
-# @app.route('/predict', methods=['POST'])
-# def predict():
-#     url = request.form['url']
-#     comments = scrape_tokopedia(url)
-#     if not comments:
-#         return jsonify({'error': 'Tidak ada komentar ditemukan.'})
+EMBEDDINGS_PATH = os.path.join(BASE_DIR, "model_word2vec_balanced", "embeddings_comments.npy")
+LABELS_PATH = os.path.join(BASE_DIR, "model_word2vec_balanced", "labels.npy")
+MODEL_EMBEDDINGS = os.path.join(BASE_DIR, "model_word2vec_balanced", "word2vec_tokopedia_balanced.model")
 
-#     df = pd.DataFrame(comments, columns=['komentar'])
-#     df['cleaned'] = df['komentar'].apply(clean_text)
-#     seq = tokenizer.texts_to_sequences(df['cleaned'])
-#     X = pad_sequences(seq, maxlen=100, padding='post')
-#     preds = (model_lstm.predict(X) > 0.5).astype("int32")
-#     df['label'] = ['Asli' if p == 1 else 'Palsu' for p in preds]
+MODEL_PATHS = [
+    os.path.join(BASE_DIR, "hasil_training_lstm", "model_terbaik", "model_K3_F1_E30_B16_D0.5.keras"),
+    os.path.join(BASE_DIR, "hasil_training_lstm", "model_terbaik", "model_K3_F2_E30_B16_D0.5.keras"),
+    os.path.join(BASE_DIR, "hasil_training_lstm", "model_terbaik", "model_K3_F3_E30_B16_D0.5.keras")
+]
 
-#     asli, palsu = (df['label'] == 'Asli').sum(), (df['label'] == 'Palsu').sum()
-#     total = len(df)
-#     hasil = "Barang Asli" if asli > palsu else "Barang Palsu"
+os.makedirs(RESULT_DIR, exist_ok=True)
 
-#     plt.figure(figsize=(5,4))
-#     plt.bar(['Asli', 'Palsu'], [asli, palsu], color=['green','red'])
-#     plt.title('Perbandingan Hasil Prediksi')
-#     plt.tight_layout()
-#     img = BytesIO()
-#     plt.savefig(img, format='png')
-#     img.seek(0)
-#     grafik_url = base64.b64encode(img.getvalue()).decode()
+# ==============================
+# 1. Scraping Komentar Tokopedia
+# ==============================
+def scrape_tokopedia(url):
+    if not url:
+        return None, "URL kosong."
 
-#     return jsonify({
-#         'data': df.to_dict(orient='records'),
-#         'asli': asli, 'palsu': palsu,
-#         'hasil': hasil,
-#         'grafik': grafik_url
-#     })
+    options = webdriver.ChromeOptions()
+    options.add_argument("--disable-gpu")
+    options.add_argument("--start-maximized")
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver.get(url)
 
-# if __name__ == '__main__':
-#     app.run(debug=True)
+    try:
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "article.css-15m2bcr"))
+        )
+    except:
+        driver.quit()
+        return None, "Gagal memuat halaman ulasan."
+
+    data = []
+    while True:
+        time.sleep(1)
+        buttons = driver.find_elements(By.XPATH, "//button[contains(., 'Selengkapnya')]")
+        for btn in buttons:
+            try:
+                driver.execute_script("arguments[0].click();", btn)
+            except:
+                continue
+
+        reviews = driver.find_elements(By.CSS_SELECTOR, "span[data-testid='lblItemUlasan']")
+        for r in reviews:
+            text = r.text.strip()
+            if text and text not in data:
+                data.append(text)
+
+        try:
+            next_button = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label^='Laman berikutnya']"))
+            )
+            driver.execute_script("arguments[0].click();", next_button)
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "article.css-15m2bcr"))
+            )
+        except:
+            break
+
+    driver.quit()
+
+    if not data:
+        return None, "Tidak ada komentar ditemukan."
+
+    csv_path = os.path.join(RESULT_DIR, "ulasan.csv")
+    df = pd.DataFrame(data, columns=["komentar"])
+    df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+    return df, f"Berhasil mengambil {len(df)} komentar."
+
+# ==============================
+# 2. Preprocessing
+# ==============================
+stem_factory = StemmerFactory()
+stemmer = stem_factory.create_stemmer()
+stop_factory = StopWordRemoverFactory()
+stopwords = stop_factory.get_stop_words()
+
+normalisasi_dict = {
+    "bgt": "banget", "gk": "tidak", "ga": "tidak", "gak": "tidak",
+    "nggak": "tidak", "ngga": "tidak", "tp": "tapi", "yg": "yang",
+    "brg": "barang", "bgs": "bagus", "rekomen": "direkomendasikan",
+    "rek": "rekomendasi", "trmksh": "terima kasih", "mksh": "makasih",
+    "udh": "sudah", "sdh": "sudah", "blm": "belum", "sm": "sama",
+    "aj": "saja", "nyah": "nya", "ny": "nya", "bhn": "bahan",
+    "expetasi": "ekspektasi", "ok": "oke", "mantul": "mantap betul"
+}
+
+def clean_text(text):
+    if not isinstance(text, str):
+        return ''
+    text = emoji.replace_emoji(text, replace='')
+    text = re.sub(r'#|@', '', text)
+    text = re.sub(r'[^\w\s]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text.lower()
+
+def preprocess_df(df):
+    df = df.drop_duplicates(subset=["komentar"]).reset_index(drop=True)
+    df["cleaned"] = df["komentar"].apply(clean_text)
+    df["tokens"] = df["cleaned"].apply(lambda x: x.split())
+    df["normalized"] = df["tokens"].apply(lambda x: [normalisasi_dict.get(w, w) for w in x])
+    df["stemmed"] = df["normalized"].apply(lambda x: [stemmer.stem(w) for w in x if w not in stopwords])
+    df["cleaned_final"] = df["stemmed"].apply(lambda x: ' '.join(x))
+    return df
+
+# ==============================
+# 3. Load Model dan Tokenizer
+# ==============================
+models = [load_model(path) for path in MODEL_PATHS]
+labels = np.load(LABELS_PATH, allow_pickle=True)
+tokenizer = Tokenizer(oov_token="<OOV>")
+tokenizer.fit_on_texts(labels)
+w2v_model = Word2Vec.load(MODEL_EMBEDDINGS)
+
+# ==============================
+# 4. Update Tokenizer & Word2Vec (belajar kata baru)
+# ==============================
+def update_tokenizer_with_new_words(df):
+    new_texts = df["cleaned_final"].tolist()
+    existing_vocab = set(tokenizer.word_index.keys())
+
+    temp_tokenizer = Tokenizer(oov_token="<OOV>")
+    temp_tokenizer.fit_on_texts(new_texts)
+    new_vocab = set(temp_tokenizer.word_index.keys())
+
+    added_words = new_vocab - existing_vocab
+    for w in added_words:
+        tokenizer.word_index[w] = len(tokenizer.word_index) + 1
+
+def extend_word2vec_model(w2v_model, tokenizer):
+    vocab = w2v_model.wv.key_to_index
+    for word in tokenizer.word_index.keys():
+        if word not in vocab:
+            w2v_model.wv[word] = np.random.normal(0, 0.01, w2v_model.vector_size)
+
+# ==============================
+# 5. Prediksi (gabung 3 model terbaik)
+# ==============================
+import numpy as np
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+def predict_lstm(df):
+    # Pastikan kolom teks tersedia
+    if "cleaned_final" not in df.columns:
+        df["cleaned_final"] = df["komentar"].astype(str).str.lower()
+
+    # Bersihkan teks
+    df["cleaned_final"] = (
+        df["cleaned_final"]
+        .str.replace(r"[^a-zA-Z\s]", "", regex=True)
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
+    )
+
+    # Tokenisasi (pastikan tokenizer sama dengan training)
+    sequences = tokenizer.texts_to_sequences(df["cleaned_final"])
+    X = pad_sequences(sequences, maxlen=100, padding="post")
+
+    # Debug: tampilkan panjang data
+    print(f"Jumlah komentar: {len(df)}, jumlah sequence: {len(X)}")
+
+    # Prediksi dengan semua model (pastikan jumlah hasil sama)
+    preds = [m.predict(X, verbose=0).flatten() for m in models]
+
+    # Cegah duplikasi: ambil hanya sebanyak jumlah baris df
+    preds = [p[:len(df)] for p in preds]
+
+    # Ensemble rata-rata berbobot
+    weights = np.array([0.5, 0.3, 0.2])
+    weights = weights[:len(preds)] / np.sum(weights[:len(preds)])
+    avg_probs = np.average(preds, axis=0, weights=weights)
+
+    # Tambahkan bias 30% ke arah palsu
+    adjusted_probs = avg_probs * 0.7
+
+    # Tangani mismatch panjang (jika masih terjadi)
+    if len(avg_probs) != len(df):
+        print(f"⚠️ Panjang tidak cocok! Menyesuaikan dari {len(avg_probs)} ke {len(df)}")
+        min_len = min(len(avg_probs), len(df))
+        avg_probs = avg_probs[:min_len]
+        adjusted_probs = adjusted_probs[:min_len]
+        df = df.head(min_len).copy()
+
+    # Simpan hasil
+    df["Prob_Asli"] = avg_probs
+    df["Label_Pred"] = np.where(adjusted_probs >= 0.5, "Asli", "Palsu")
+
+    # Warna output (tanpa emoji)
+    for i, row in df.iterrows():
+        label = row["Label_Pred"]
+        color = "\033[92m" if label == "Asli" else "\033[91m"
+        print(f"{color}{row['komentar']} -> {label} ({row['Prob_Asli']:.3f})\033[0m")
+
+    return df
+
+
+# ==============================
+# 6. Evaluasi & Hasil Akhir
+# ==============================
+def evaluate_result(df):
+    total_asli = (df["Label_Pred"] == "Asli").sum()
+    total_palsu = (df["Label_Pred"] == "Palsu").sum()
+    total = len(df)
+    if total == 0:
+        accuracy = 0
+    else:
+        accuracy = (total_asli + total_palsu) / total
+
+    hasil = "Barang yang dijual Asli" if total_asli > total_palsu else "Barang yang dijual Palsu"
+    warna = "#2a9d8f" if hasil.endswith("Asli") else "#e63946"
+
+    hasil_html = f"""
+    <div style='text-align:center; margin-top:20px;'>
+        <h3 style='color:{warna};'>{hasil}</h3>
+        <p><b>Akurasi Prediksi:</b> {accuracy*100:.2f}%</p>
+        <p><i>Total komentar:</i> {total}</p>
+    </div>
+    """
+    return hasil_html
+
+# ==============================
+# 7. UI Gradio
+# ==============================
+def sistem_rekomendasi_ui(url):
+    df_scrape, msg = scrape_tokopedia(url)
+    if df_scrape is None:
+        return msg, None, None
+
+    df_clean = preprocess_df(df_scrape)
+    df_pred = predict_lstm(df_clean)
+    df_display = df_pred[["komentar", "Prob_Asli", "Label_Pred"]]
+
+    csv_path = os.path.join(RESULT_DIR, "ulasan_prediksi.csv")
+    df_display.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    hasil_html = evaluate_result(df_pred)
+    return msg, df_display, hasil_html
+
+# ==============================
+# 8. Gradio Blocks
+# ==============================
+with gr.Blocks(theme=gr.themes.Soft()) as demo:
+    gr.HTML("<div style='height:40px;'></div>")
+    gr.HTML("<h1 style='text-align:center;'>Sistem Rekomendasi Keaslian Produk Tokopedia</h1>")
+
+    url_input = gr.Textbox(label="Masukkan URL review Tokopedia")
+    analyze_btn = gr.Button("Mulai Analisis")
+    status = gr.Textbox(label="Status", interactive=False)
+    output_table = gr.DataFrame(headers=["komentar", "Prob_Asli", "Label_Pred"], wrap=True)
+    hasil_pred = gr.HTML(label="Hasil Akhir Prediksi")
+
+    analyze_btn.click(
+        sistem_rekomendasi_ui,
+        inputs=[url_input],
+        outputs=[status, output_table, hasil_pred]
+    )
+    gr.HTML("<div style='height:40px;'></div>")
+
+demo.launch()

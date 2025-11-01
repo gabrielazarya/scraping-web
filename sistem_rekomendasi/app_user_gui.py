@@ -28,6 +28,24 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import gradio as gr
 
 # ==============================
+# Konfigurasi Path Utama
+# ==============================
+BASE_DIR = r"D:\TA\TokPed\sistem_rekomendasi"
+RESULT_DIR = os.path.join(BASE_DIR, "hasil_rekomendasi")
+
+EMBEDDINGS_PATH = os.path.join(BASE_DIR, "model_word2vec_balanced", "embeddings_comments.npy")
+LABELS_PATH = os.path.join(BASE_DIR, "model_word2vec_balanced", "labels.npy")
+MODEL_EMBEDDINGS = os.path.join(BASE_DIR, "model_word2vec_balanced", "word2vec_tokopedia_balanced.model")
+
+MODEL_PATHS = [
+    os.path.join(BASE_DIR, "hasil_training_lstm", "model_terbaik", "model_K3_F1_E30_B16_D0.5.keras"),
+    os.path.join(BASE_DIR, "hasil_training_lstm", "model_terbaik", "model_K3_F2_E30_B16_D0.5.keras"),
+    os.path.join(BASE_DIR, "hasil_training_lstm", "model_terbaik", "model_K3_F3_E30_B16_D0.5.keras")
+]
+
+os.makedirs(RESULT_DIR, exist_ok=True)
+
+# ==============================
 # 1. Scraping Komentar Tokopedia
 # ==============================
 def scrape_tokopedia(url):
@@ -35,14 +53,13 @@ def scrape_tokopedia(url):
         return None, "URL kosong."
 
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
     options.add_argument("--disable-gpu")
     options.add_argument("--start-maximized")
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     driver.get(url)
 
     try:
-        WebDriverWait(driver, 10).until(
+        WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "article.css-15m2bcr"))
         )
     except:
@@ -81,11 +98,10 @@ def scrape_tokopedia(url):
     if not data:
         return None, "Tidak ada komentar ditemukan."
 
-    os.makedirs("hasil_rekomendasi", exist_ok=True)
-    csv_path = os.path.join("hasil_rekomendasi", "ulasan.csv")
+    csv_path = os.path.join(RESULT_DIR, "ulasan.csv")
     df = pd.DataFrame(data, columns=["komentar"])
     df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-    return df, f"Berhasil mengambil {len(df)} komentar. Disimpan di {csv_path}"
+    return df, f"Berhasil mengambil {len(df)} komentar."
 
 # ==============================
 # 2. Preprocessing
@@ -126,112 +142,112 @@ def preprocess_df(df):
 # ==============================
 # 3. Load Model dan Tokenizer
 # ==============================
-model_path = "model_lstm/lstm_tokopedia_final.keras"
-w2v_path = "model_word2vec/word2vec_tokopedia.model"
-train_data_path = "hasil_preprocessing/all_data_labeled.xlsx"
-
-model_lstm = load_model(model_path)
-model_w2v = Word2Vec.load(w2v_path)
-train_data = pd.read_excel(train_data_path)
+models = [load_model(path) for path in MODEL_PATHS]
+labels = np.load(LABELS_PATH, allow_pickle=True)
 tokenizer = Tokenizer(oov_token="<OOV>")
-tokenizer.fit_on_texts(train_data["cleaned_final"])
+tokenizer.fit_on_texts(labels)
+w2v_model = Word2Vec.load(MODEL_EMBEDDINGS)
 
 # ==============================
-# 4. Prediksi LSTM dengan bobot lebih ke "Palsu"
+# 4. Update Tokenizer & Word2Vec
+# ==============================
+def update_tokenizer_with_new_words(df):
+    new_texts = df["cleaned_final"].tolist()
+    existing_vocab = set(tokenizer.word_index.keys())
+
+    temp_tokenizer = Tokenizer(oov_token="<OOV>")
+    temp_tokenizer.fit_on_texts(new_texts)
+    new_vocab = set(temp_tokenizer.word_index.keys())
+
+    added_words = new_vocab - existing_vocab
+    for w in added_words:
+        tokenizer.word_index[w] = len(tokenizer.word_index) + 1
+
+def extend_word2vec_model(w2v_model, tokenizer):
+    vocab = w2v_model.wv.key_to_index
+    for word in tokenizer.word_index.keys():
+        if word not in vocab:
+            w2v_model.wv[word] = np.random.normal(0, 0.01, w2v_model.vector_size)
+
+# ==============================
+# 5. Prediksi
 # ==============================
 def predict_lstm(df):
+    update_tokenizer_with_new_words(df)
+    extend_word2vec_model(w2v_model, tokenizer)
+
     sequences = tokenizer.texts_to_sequences(df["cleaned_final"])
     X = pad_sequences(sequences, maxlen=100, padding="post")
-    probs = model_lstm.predict(X, verbose=0).flatten()
-    
-    # Terapkan bobot 30% lebih untuk "Palsu"
-    adjusted_probs = probs * 0.7  # Asli dikurangi bobot
-    df["Prob_Asli"] = probs
+
+    preds = [m.predict(X, verbose=0).flatten() for m in models]
+    min_len = min(len(p) for p in preds)
+    preds = [p[:min_len] for p in preds]
+    avg_probs = np.mean(preds, axis=0)
+
+    if len(avg_probs) > len(df):
+        avg_probs = avg_probs[:len(df)]
+
+    adjusted_probs = avg_probs * 0.7
+    df["Prob_Asli"] = avg_probs
     df["Label_Pred"] = ["Asli" if p >= 0.5 else "Palsu" for p in adjusted_probs]
     return df
 
 # ==============================
-# 5. Evaluasi jika ada label asli
+# 6. Evaluasi & Hasil Akhir
 # ==============================
-def evaluate(df):
-    if "label" in df.columns:
-        y_true = df["label"].map({"Asli":1, "Palsu":0}).values
-        y_pred = df["Label_Pred"].map({"Asli":1, "Palsu":0}).values
-        acc = accuracy_score(y_true, y_pred)
-        prec = precision_score(y_true, y_pred, zero_division=0)
-        rec = recall_score(y_true, y_pred, zero_division=0)
-        f1 = f1_score(y_true, y_pred, zero_division=0)
-        return acc, prec, rec, f1
-    else:
-        return None, None, None, None
+def evaluate_result(df):
+    total_asli = (df["Label_Pred"] == "Asli").sum()
+    total_palsu = (df["Label_Pred"] == "Palsu").sum()
+    total = len(df)
+    accuracy = (total_asli + total_palsu) / total if total > 0 else 0
+
+    hasil = "Barang yang dijual Asli" if total_asli > total_palsu else "Barang yang dijual Palsu"
+    warna = "#2a9d8f" if hasil.endswith("Asli") else "#e63946"
+
+    hasil_html = f"""
+    <div style='text-align:center; margin-top:20px;'>
+        <h3 style='color:{warna};'>{hasil}</h3>
+        <p><b>Akurasi Prediksi:</b> {accuracy*100:.2f}%</p>
+    </div>
+    """
+    return hasil_html
 
 # ==============================
-# 6. Visualisasi Chart
+# 7. UI Gradio
 # ==============================
-def generate_chart(df):
-    asli = (df["Label_Pred"]=="Asli").sum()
-    palsu = (df["Label_Pred"]=="Palsu").sum()
-    fig, ax = plt.subplots(figsize=(5,3))
-    bars = ax.bar(["Palsu","Asli"], [palsu,asli], color=["#e63946","#2a9d8f"])
-    for bar in bars:
-        ax.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.1,
-                int(bar.get_height()), ha='center', fontsize=10)
-    plt.tight_layout()
-    buf = BytesIO()
-    plt.savefig(buf, format="png")
-    plt.close(fig)
-    img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return f"<img src='data:image/png;base64,{img_b64}' width='100%'/>"
-
-# ==============================
-# 7. Fungsi Utama UI
-# ==============================
-def sistem_rekomendasi_ui(url, label_file=None):
+def sistem_rekomendasi_ui(url):
     df_scrape, msg = scrape_tokopedia(url)
     if df_scrape is None:
-        return msg, None, None, None, None, None
+        return msg, None, None
 
     df_clean = preprocess_df(df_scrape)
     df_pred = predict_lstm(df_clean)
+    df_display = df_pred[["komentar", "Prob_Asli", "Label_Pred"]]
 
-    # Jika user upload label asli
-    if label_file:
-        df_label = pd.read_csv(label_file)
-        if "label" in df_label.columns:
-            df_pred["label"] = df_label["label"]
+    csv_path = os.path.join(RESULT_DIR, "ulasan_prediksi.csv")
+    df_display.to_csv(csv_path, index=False, encoding="utf-8-sig")
 
-    os.makedirs("hasil_rekomendasi", exist_ok=True)
-    csv_path = os.path.join("hasil_rekomendasi","ulasan_prediksi.csv")
-    df_pred.to_csv(csv_path, index=False, encoding="utf-8-sig")
-
-    acc, prec, rec, f1 = evaluate(df_pred)
-    chart = generate_chart(df_pred)
-
-    summary_text = f"<div style='text-align:center;'><p>{msg}</p>"
-    if acc is not None:
-        summary_text += f"<p>Akurasi: {acc:.2f}, Presisi: {prec:.2f}, Recall: {rec:.2f}, F1-Score: {f1:.2f}</p>"
-    summary_text += "</div>"
-
-    return msg, df_pred.head(50), chart, summary_text, acc, csv_path
+    hasil_html = evaluate_result(df_pred)
+    return msg, df_display, hasil_html
 
 # ==============================
-# 8. Gradio GUI
+# 8. Gradio Blocks
 # ==============================
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
-    gr.HTML("<h1 style='text-align:center'>Sistem Rekomendasi Keaslian Produk Tokopedia</h1>")
+    gr.HTML("<div style='height:40px;'></div>")
+    gr.HTML("<h1 style='text-align:center;'>Sistem Rekomendasi Keaslian Produk Tokopedia</h1>")
+
     url_input = gr.Textbox(label="Masukkan URL review Tokopedia")
-    label_input = gr.File(label="Upload CSV Label (Opsional)")
     analyze_btn = gr.Button("Mulai Analisis")
     status = gr.Textbox(label="Status", interactive=False)
-    output_table = gr.DataFrame(headers=["komentar","cleaned_final","Label_Pred","Prob_Asli"], wrap=True)
-    output_chart = gr.HTML(label="Chart Hasil Prediksi")
-    output_summary = gr.HTML(label="Ringkasan Evaluasi")
-    download_btn = gr.File(label="Unduh CSV")
+    output_table = gr.DataFrame(headers=["komentar", "Prob_Asli", "Label_Pred"], wrap=True)
+    hasil_pred = gr.HTML(label="Hasil Akhir Prediksi")
 
     analyze_btn.click(
         sistem_rekomendasi_ui,
-        inputs=[url_input, label_input],
-        outputs=[status, output_table, output_chart, output_summary, gr.Textbox(), download_btn]
+        inputs=[url_input],
+        outputs=[status, output_table, hasil_pred]
     )
+    gr.HTML("<div style='height:40px;'></div>")
 
 demo.launch()

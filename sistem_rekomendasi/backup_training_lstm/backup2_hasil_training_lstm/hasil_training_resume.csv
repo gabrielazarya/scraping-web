@@ -1,0 +1,3 @@
+K,Fold,Epoch,Batch,Dropout,Train Accuracy,Val Accuracy,Train Loss,Val Loss,Durasi (detik)
+3.0,1.0,10.0,16.0,0.2,0.4926,0.5024,0.6935,0.6932,505.83
+3.0,2.0,10.0,16.0,0.2,0.495,0.5085,0.6936,0.6931,736.13
