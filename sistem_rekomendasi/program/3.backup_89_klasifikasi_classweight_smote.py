@@ -1,7 +1,7 @@
 import os, time, json, itertools, signal, warnings
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils import shuffle, class_weight
 from sklearn.metrics import classification_report, confusion_matrix
@@ -9,7 +9,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.callbacks import Callback
+from tensorflow.keras.callbacks import Callback, ReduceLROnPlateau
 
 warnings.filterwarnings("ignore")
 
@@ -23,7 +23,6 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 CSV_LOG_PATH = os.path.join(OUTPUT_DIR, 'hasil_training_resume.csv')
 CSV_REPORT_PATH = os.path.join(OUTPUT_DIR, 'hasil_classification_report.csv')
 CSV_CONFUSION_PATH = os.path.join(OUTPUT_DIR, 'hasil_confusion_matrix.csv')
-TEXT_LOG_PATH = os.path.join(OUTPUT_DIR, 'training_detail_log.txt')
 
 BALANCE_METHOD = 'oversample_per_fold'
 stop_training = False
@@ -41,19 +40,6 @@ class GracefulStopCallback(Callback):
         if stop_training:
             print("\n[INFO] Training dihentikan oleh pengguna.")
             self.model.stop_training = True
-
-# ====================== Custom Logging Callback ======================
-class EpochLoggingCallback(Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        with open(TEXT_LOG_PATH, "a", encoding="utf-8") as f:
-            text = (
-                f"Epoch {epoch+1} - "
-                f"loss: {logs.get('loss', 0):.4f} - "
-                f"accuracy: {logs.get('accuracy', 0):.4f} - "
-                f"val_loss: {logs.get('val_loss', 0):.4f} - "
-                f"val_accuracy: {logs.get('val_accuracy', 0):.4f}\n"
-            )
-            f.write(text)
 
 # ====================== Load Embeddings ======================
 X = np.load(EMBEDDINGS_PATH)
@@ -78,7 +64,7 @@ param_grid = [
     for k, e, b, d in itertools.product(k_values, epochs_values, batch_values, dropout_values)
 ]
 
-print(f"[INFO] Total kombinasi parameter: {len(param_grid)}")
+print(f"[INFO] Total kombinasi parameter: {len(param_grid)}")  # 81
 
 # ====================== CSV Init ======================
 def init_csv(path, cols):
@@ -89,8 +75,7 @@ def init_csv(path, cols):
 
 df_log = init_csv(CSV_LOG_PATH, [
     'K', 'Fold', 'Epoch', 'Batch', 'Dropout',
-    'Train Accuracy', 'Val Accuracy', 'Test Accuracy',
-    'Train Loss', 'Val Loss',
+    'Train Accuracy', 'Val Accuracy', 'Train Loss', 'Val Loss',
     'Precision', 'Recall', 'Durasi (detik)'
 ])
 df_report = init_csv(CSV_REPORT_PATH, [
@@ -99,23 +84,6 @@ df_report = init_csv(CSV_REPORT_PATH, [
 df_conf = init_csv(CSV_CONFUSION_PATH, [
     'K', 'Fold', 'Epoch', 'Batch', 'Dropout', 'Confusion_Flat'
 ])
-
-# ====================== Log File Init ======================
-with open(TEXT_LOG_PATH, "a", encoding="utf-8") as f:
-    f.write("\n" + "="*80 + "\n")
-    f.write("LOG TRAINING DETAIL\n")
-    f.write("="*80 + "\n")
-
-# ====================== Resume Support ======================
-def fold_done_before(k, fold, epoch, batch, dropout):
-    existing = df_log[
-        (df_log['K'] == k) &
-        (df_log['Fold'] == fold) &
-        (df_log['Epoch'] == epoch) &
-        (df_log['Batch'] == batch) &
-        (df_log['Dropout'] == dropout)
-    ]
-    return not existing.empty
 
 # ====================== Model Builder ======================
 def build_model(input_dim, dropout=0.3):
@@ -138,14 +106,11 @@ for params in param_grid:
         break
     combo_counter += 1
     k = params['k']
-    epoch_total = params['epoch']
+    epoch = params['epoch']
     batch = params['batch']
     dropout = params['dropout']
 
-    header_text = f"\nKombinasi ke {combo_counter}/{len(param_grid)} | K={k}, Epoch={epoch_total}, Batch={batch}, Dropout={dropout}\n"
-    print(header_text)
-    with open(TEXT_LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(header_text)
+    print(f"\nKombinasi ke {combo_counter}/{len(param_grid)} | K={k}, Epoch={epoch}, Batch={batch}, Dropout={dropout}")
 
     skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=42)
     fold_idx = 0
@@ -154,27 +119,16 @@ for params in param_grid:
         if stop_training:
             break
         fold_idx += 1
+        print(f"\n{'='*30} Fold {fold_idx}/{k} {'='*30}\n")  # Pemisah fold
 
-        fold_text = f"\n{'='*30} Fold {fold_idx}/{k} {'='*30}\n"
-        print(fold_text)
-        with open(TEXT_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(fold_text)
+        X_train, X_val = X[train_idx], X[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
 
-        if fold_done_before(k, fold_idx, epoch_total, batch, dropout):
-            print(f"[INFO] Fold {fold_idx} sudah pernah diselesaikan. Melewati fold ini.")
-            continue
-
-        X_train_full, X_val = X[train_idx], X[val_idx]
-        y_train_full, y_val = y[train_idx], y[val_idx]
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_train_full, y_train_full, test_size=0.1, random_state=42, stratify=y_train_full
-        )
-
+        # Reshape untuk LSTM: (samples, timesteps=1, features)
         X_train_lstm = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
         X_val_lstm = X_val.reshape((X_val.shape[0], X_val.shape[1], 1))
-        X_test_lstm = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
 
+        # ====================== Oversample per fold ======================
         if BALANCE_METHOD == 'oversample_per_fold':
             counts = np.bincount(np.argmax(y_train, axis=1))
             max_count = counts.max()
@@ -196,67 +150,66 @@ for params in param_grid:
             X_train_lstm = X_train_lstm[shuffle_idx]
             y_train = y_train[shuffle_idx]
 
+        # Class weights
         class_weights_dict = dict(enumerate(
             class_weight.compute_class_weight('balanced', classes=np.arange(n_classes), y=np.argmax(y_train, axis=1))
         ))
 
+        # Build model
         model = build_model(X_train_lstm.shape[1], dropout=dropout)
-        callbacks = [GracefulStopCallback(), EpochLoggingCallback()]
+        callbacks = [GracefulStopCallback()]  # EarlyStopping dihapus agar semua epoch selesai
 
+        # Fit model
         start_time = time.time()
         hist = model.fit(
             X_train_lstm, y_train,
             validation_data=(X_val_lstm, y_val),
-            epochs=epoch_total,
+            epochs=epoch,
             batch_size=batch,
             class_weight=class_weights_dict,
-            verbose=1,
+            verbose=1,  # hijau progress bar asli
             callbacks=callbacks
         )
         duration = time.time() - start_time
 
-        y_pred_val = np.argmax(model.predict(X_val_lstm, verbose=0), axis=1)
-        y_true_val = np.argmax(y_val, axis=1)
-        report = classification_report(y_true_val, y_pred_val, target_names=le.classes_, output_dict=True, zero_division=0)
-        cm = confusion_matrix(y_true_val, y_pred_val)
+        # Predict & evaluate
+        y_pred = np.argmax(model.predict(X_val_lstm, verbose=0), axis=1)
+        y_true = np.argmax(y_val, axis=1)
+        report = classification_report(y_true, y_pred, target_names=le.classes_, output_dict=True, zero_division=0)
+        cm = confusion_matrix(y_true, y_pred)
 
-        # Evaluate test set
-        test_loss, test_acc = model.evaluate(X_test_lstm, y_test, verbose=0)
-        test_text = f"[TEST] Fold {fold_idx}/{k} - Test Accuracy: {test_acc:.4f} - Test Loss: {test_loss:.4f}\n"
-        print(test_text)
-        with open(TEXT_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(test_text + "\n")
-
+        # Save per-class report
         for label, vals in report.items():
             if label in le.classes_:
                 df_report.loc[len(df_report)] = [
-                    k, fold_idx, epoch_total, batch, dropout,
+                    k, fold_idx, epoch, batch, dropout,
                     label, vals['precision'], vals['recall'], vals['f1-score'], vals['support']
                 ]
 
+        # Save confusion matrix
         df_conf.loc[len(df_conf)] = [
-            k, fold_idx, epoch_total, batch, dropout, json.dumps(cm.tolist())
+            k, fold_idx, epoch, batch, dropout, json.dumps(cm.tolist())
         ]
 
-        model_path = os.path.join(OUTPUT_DIR, f'model_K{k}_F{fold_idx}_E{epoch_total}_B{batch}_D{dropout}.keras')
+        # Save model
+        model_path = os.path.join(OUTPUT_DIR, f'model_K{k}_F{fold_idx}_E{epoch}_B{batch}_D{dropout}.keras')
         model.save(model_path)
 
+        # Save log
         df_log.loc[len(df_log)] = [
-            k, fold_idx, epoch_total, batch, dropout,
-            hist.history['accuracy'][-1],
-            hist.history['val_accuracy'][-1],
-            test_acc,
-            hist.history['loss'][-1],
-            hist.history['val_loss'][-1],
+            k, fold_idx, epoch, batch, dropout,
+            round(hist.history['accuracy'][-1], 4),
+            round(hist.history['val_accuracy'][-1], 4),
+            round(hist.history['loss'][-1], 4),
+            round(hist.history['val_loss'][-1], 4),
             report['weighted avg']['precision'],
             report['weighted avg']['recall'],
-            duration
+            round(duration, 2)
         ]
 
+        # Update CSV setiap fold
         df_log.to_csv(CSV_LOG_PATH, index=False)
         df_report.to_csv(CSV_REPORT_PATH, index=False)
         df_conf.to_csv(CSV_CONFUSION_PATH, index=False)
 
 print("\n[INFO] Training selesai sepenuhnya.")
-with open(TEXT_LOG_PATH, "a", encoding="utf-8") as f:
-    f.write("\n[INFO] Training selesai sepenuhnya.\n")
