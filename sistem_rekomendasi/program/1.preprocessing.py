@@ -1,13 +1,9 @@
-# === Import Library Utama ===
 import pandas as pd
 import re
 import emoji
 import os
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 
-# ==============================
-# 1️⃣ BACA DATA
-# ==============================
 input_path = 'sistem_rekomendasi/hasil_ulasan/50_csv_ulasan.csv'
 df = pd.read_csv(input_path)
 kolom_komentar = 'komentar'
@@ -15,15 +11,9 @@ df[kolom_komentar] = df[kolom_komentar].astype(str)
 
 print(f"Jumlah data awal: {len(df)}")
 
-# ==============================
-# 2️⃣ HAPUS DUPLIKAT
-# ==============================
 df = df.drop_duplicates(subset=[kolom_komentar], keep='first').reset_index(drop=True)
 print(f"Setelah hapus duplikat: {len(df)} data unik")
 
-# ==============================
-# 3️⃣ DATA CLEANING (tanpa hapus angka & tetap jaga makna)
-# ==============================
 def clean_text(teks):
     if not isinstance(teks, str):
         return ''
@@ -37,19 +27,10 @@ def clean_text(teks):
 df['cleaned_text'] = df[kolom_komentar].apply(clean_text)
 df = df[df['cleaned_text'].astype(bool)].reset_index(drop=True)
 
-# ==============================
-# 4️⃣ CASE FOLDING
-# ==============================
 df['casefolded'] = df['cleaned_text'].str.lower()
 
-# ==============================
-# 5️⃣ TOKENIZATION
-# ==============================
 df['tokens'] = df['casefolded'].apply(lambda x: x.split())
 
-# ==============================
-# 6️⃣ NORMALIZATION
-# ==============================
 normalisasi_dict = {
     "bgt": "banget", "gk": "tidak", "ga": "tidak", "gak": "tidak",
     "nggak": "tidak", "ngga": "tidak", "tp": "tapi", "yg": "yang",
@@ -65,9 +46,6 @@ def normalisasi(tokens):
 
 df['normalized'] = df['tokens'].apply(normalisasi)
 
-# ==============================
-# 7️⃣ STEMMING
-# ==============================
 stem_factory = StemmerFactory()
 stemmer = stem_factory.create_stemmer()
 
@@ -76,21 +54,14 @@ def stemming_list(tokens):
 
 df['stemmed'] = df['normalized'].apply(stemming_list)
 
-# ==============================
-# 8️⃣ HASIL AKHIR
-# ==============================
 df['cleaned'] = df['stemmed'].apply(lambda x: ' '.join(x))
 df = df[df['cleaned'].str.strip().astype(bool)].reset_index(drop=True)
 
-# Tambahkan kolom label kosong (untuk labeling manual)
 df['label'] = ''
 
 print("\nContoh hasil preprocessing:")
 print(df[['casefolded', 'cleaned', 'label']].head(10))
 
-# ==============================
-# 9️⃣ SIMPAN KE EXCEL
-# ==============================
 output_dir = 'sistem_rekomendasi/hasil_preprocessing'
 os.makedirs(output_dir, exist_ok=True)
 

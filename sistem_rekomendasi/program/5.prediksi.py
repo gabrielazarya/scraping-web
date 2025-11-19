@@ -25,9 +25,7 @@ from tensorflow.keras.models import load_model
 
 import gradio as gr
 
-# ==============================
 # Konfigurasi Path Utama
-# ==============================
 BASE_DIR = r"D:\TA\TokPed\sistem_rekomendasi"
 RESULT_DIR = os.path.join(BASE_DIR, "hasil_rekomendasi")
 
@@ -36,23 +34,23 @@ LABELS_PATH = os.path.join(BASE_DIR, "model_word2vec_balanced", "labels.npy")
 MODEL_EMBEDDINGS = os.path.join(BASE_DIR, "model_word2vec_balanced", "word2vec_tokopedia_balanced.model")
 
 MODEL_PATHS = [
-    os.path.join(BASE_DIR, "hasil_training_lstm", "model_terbaik", "model_K3_F1_E30_B16_D0.5.keras"),
-    os.path.join(BASE_DIR, "hasil_training_lstm", "model_terbaik", "model_K3_F2_E30_B16_D0.5.keras"),
-    os.path.join(BASE_DIR, "hasil_training_lstm", "model_terbaik", "model_K3_F3_E30_B16_D0.5.keras")
+    os.path.join(BASE_DIR, "model_terbaik", "model_K10_F10_E20_B16_D0.3.keras")
 ]
 
 os.makedirs(RESULT_DIR, exist_ok=True)
 
-# ==============================
 # 1. Scraping Komentar Tokopedia
-# ==============================
 def scrape_tokopedia(url):
     if not url:
         return None, "URL kosong."
 
     options = webdriver.ChromeOptions()
     options.add_argument("--disable-gpu")
-    options.add_argument("--start-maximized")
+    # options.add_argument("--headless=new")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     driver.get(url)
 
@@ -60,6 +58,13 @@ def scrape_tokopedia(url):
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "article.css-15m2bcr"))
         )
+
+        # Tunggu sebentar dan klik di pojok kiri atas
+        time.sleep(1)
+        from selenium.webdriver import ActionChains
+        actions = ActionChains(driver)
+        actions.move_by_offset(10, 10).click().perform()
+
     except:
         driver.quit()
         return None, "Gagal memuat halaman ulasan."
@@ -101,9 +106,8 @@ def scrape_tokopedia(url):
     df.to_csv(csv_path, index=False, encoding="utf-8-sig")
     return df, f"Berhasil mengambil {len(df)} komentar."
 
-# ==============================
+
 # 2. Preprocessing
-# ==============================
 stem_factory = StemmerFactory()
 stemmer = stem_factory.create_stemmer()
 stop_factory = StopWordRemoverFactory()
@@ -137,18 +141,14 @@ def preprocess_df(df):
     df["cleaned_final"] = df["stemmed"].apply(lambda x: ' '.join(x))
     return df
 
-# ==============================
 # 3. Load Model dan Tokenizer
-# ==============================
 models = [load_model(path) for path in MODEL_PATHS]
 labels = np.load(LABELS_PATH, allow_pickle=True)
 tokenizer = Tokenizer(oov_token="<OOV>")
 tokenizer.fit_on_texts(labels)
 w2v_model = Word2Vec.load(MODEL_EMBEDDINGS)
 
-# ==============================
 # 4. Update Tokenizer & Word2Vec (belajar kata baru)
-# ==============================
 def update_tokenizer_with_new_words(df):
     new_texts = df["cleaned_final"].tolist()
     existing_vocab = set(tokenizer.word_index.keys())
@@ -167,9 +167,7 @@ def extend_word2vec_model(w2v_model, tokenizer):
         if word not in vocab:
             w2v_model.wv[word] = np.random.normal(0, 0.01, w2v_model.vector_size)
 
-# ==============================
 # 5. Prediksi (gabung 3 model terbaik)
-# ==============================
 import numpy as np
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
@@ -209,7 +207,7 @@ def predict_lstm(df):
 
     # Tangani mismatch panjang (jika masih terjadi)
     if len(avg_probs) != len(df):
-        print(f"⚠️ Panjang tidak cocok! Menyesuaikan dari {len(avg_probs)} ke {len(df)}")
+        print(f"Panjang tidak cocok! Menyesuaikan dari {len(avg_probs)} ke {len(df)}")
         min_len = min(len(avg_probs), len(df))
         avg_probs = avg_probs[:min_len]
         adjusted_probs = adjusted_probs[:min_len]
@@ -219,75 +217,134 @@ def predict_lstm(df):
     df["Prob_Asli"] = avg_probs
     df["Label_Pred"] = np.where(adjusted_probs >= 0.5, "Asli", "Palsu")
 
-    # Warna output (tanpa emoji)
-    for i, row in df.iterrows():
-        label = row["Label_Pred"]
-        color = "\033[92m" if label == "Asli" else "\033[91m"
-        print(f"{color}{row['komentar']} -> {label} ({row['Prob_Asli']:.3f})\033[0m")
-
     return df
 
 
-# ==============================
-# 6. Evaluasi & Hasil Akhir
-# ==============================
+# === 6. Evaluasi & Hasil Akhir ===
 def evaluate_result(df):
     total_asli = (df["Label_Pred"] == "Asli").sum()
     total_palsu = (df["Label_Pred"] == "Palsu").sum()
     total = len(df)
+
     if total == 0:
-        accuracy = 0
+        persentase_asli = persentase_palsu = 0
     else:
-        accuracy = (total_asli + total_palsu) / total
+        persentase_asli = (total_asli / total) * 100
+        persentase_palsu = (total_palsu / total) * 100
 
     hasil = "Barang yang dijual Asli" if total_asli > total_palsu else "Barang yang dijual Palsu"
     warna = "#2a9d8f" if hasil.endswith("Asli") else "#e63946"
 
+    # 🖋️ Tulisan prediksi & total sekarang warna hitam
     hasil_html = f"""
     <div style='text-align:center; margin-top:20px;'>
         <h3 style='color:{warna};'>{hasil}</h3>
-        <p><b>Akurasi Prediksi:</b> {accuracy*100:.2f}%</p>
-        <p><i>Total komentar:</i> {total}</p>
+        <p style='color:black;'><b>Prediksi Asli:</b> {persentase_asli:.2f}%</p>
+        <p style='color:black;'><b>Prediksi Palsu:</b> {persentase_palsu:.2f}%</p>
+        <p style='color:black;'><i>Total komentar dianalisis:</i> {total}</p>
     </div>
     """
-    return hasil_html
 
-# ==============================
-# 7. UI Gradio
-# ==============================
+    # Tambahkan total komentar per label (warna tetap hitam)
+    total_summary = f"""
+    <div style='text-align:center; margin-top:10px; color:black;'>
+        <b>Total komentar Asli:</b> {total_asli} &nbsp; | &nbsp;
+        <b>Total komentar Palsu:</b> {total_palsu}
+    </div>
+    """
+    return hasil_html, total_summary
+
+# === 6b. Tambahkan Diagram Batang ===
+def generate_bar_chart(df):
+    total_asli = (df["Label_Pred"] == "Asli").sum()
+    total_palsu = (df["Label_Pred"] == "Palsu").sum()
+
+    labels = ["Asli", "Palsu"]
+    values = [total_asli, total_palsu]
+    colors = ["#2a9d8f", "#e63946"]
+
+    plt.figure(figsize=(4, 3))
+    plt.bar(labels, values, color=colors)
+    plt.title("Distribusi Prediksi", fontsize=12)
+    plt.ylabel("Jumlah Komentar")
+    plt.tight_layout()
+
+    buffer = BytesIO()
+    plt.savefig(buffer, format="png")
+    buffer.seek(0)
+    img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    plt.close()
+
+    return f"<img src='data:image/png;base64,{img_base64}'/>"
+
+
+
+# === 7. UI Gradio ===
 def sistem_rekomendasi_ui(url):
     df_scrape, msg = scrape_tokopedia(url)
     if df_scrape is None:
-        return msg, None, None
+        return msg, None, None, None
 
     df_clean = preprocess_df(df_scrape)
+    preprocessed_path = os.path.join(RESULT_DIR, "ulasan_preprocessed.csv")
+    df_clean.to_csv(preprocessed_path, index=False, encoding="utf-8-sig")
+
     df_pred = predict_lstm(df_clean)
     df_display = df_pred[["komentar", "Prob_Asli", "Label_Pred"]]
 
     csv_path = os.path.join(RESULT_DIR, "ulasan_prediksi.csv")
     df_display.to_csv(csv_path, index=False, encoding="utf-8-sig")
 
-    hasil_html = evaluate_result(df_pred)
-    return msg, df_display, hasil_html
+    hasil_html, total_summary = evaluate_result(df_pred)
+    chart_html = generate_bar_chart(df_pred)
+    return msg, hasil_html, df_display, total_summary, chart_html
 
-# ==============================
-# 8. Gradio Blocks
-# ==============================
-with gr.Blocks(theme=gr.themes.Soft()) as demo:
+
+# === 8. Gradio Blocks (layout diperbarui) ===
+custom_css = """
+body {
+    background-color: #d6d6d6 !important;  
+}
+h1 {
+    color: black;
+}
+.gradio-container {
+    background-color: #f0f0f0 !important;
+}
+textarea, input[type="text"], input[type="url"], .gr-textbox, .gr-textbox input {
+    background-color: #ffffff !important;  /* Textbox putih */
+    color: #000000 !important;
+    border: 1px solid #ccc !important;
+    border-radius: 8px !important;
+}
+button {
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+}
+p, b, i{
+    color: black;
+}
+"""
+
+with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
     gr.HTML("<div style='height:40px;'></div>")
     gr.HTML("<h1 style='text-align:center;'>Sistem Rekomendasi Keaslian Produk Tokopedia</h1>")
 
-    url_input = gr.Textbox(label="Masukkan URL review Tokopedia")
+    url_input = gr.Textbox(label="Masukkan URL review Tokopedia", placeholder="https://www.tokopedia.com/.../ulasan")
     analyze_btn = gr.Button("Mulai Analisis")
     status = gr.Textbox(label="Status", interactive=False)
-    output_table = gr.DataFrame(headers=["komentar", "Prob_Asli", "Label_Pred"], wrap=True)
     hasil_pred = gr.HTML(label="Hasil Akhir Prediksi")
+    output_table = gr.DataFrame(headers=["komentar", "Prob_Asli", "Label_Pred"], wrap=True)
+    total_info = gr.HTML(label="Total Komentar")
+    chart_output = gr.HTML(label="Visualisasi")
 
     analyze_btn.click(
         sistem_rekomendasi_ui,
         inputs=[url_input],
-        outputs=[status, output_table, hasil_pred]
+        outputs=[status, hasil_pred, output_table, total_info, chart_output]
     )
+
+
     gr.HTML("<div style='height:40px;'></div>")
 
 demo.launch()
