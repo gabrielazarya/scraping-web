@@ -50,11 +50,11 @@ for k in k_values:
         # Buat diagram bar
         bars = plt.bar(available_folds, best_values, color=colors, alpha=0.8, edgecolor='black', linewidth=1.5)
         
-        # Tambahkan nilai di atas bar
+        # Tambahkan nilai di atas bar - SESUAIKAN FONT SIZE
         for i, (bar, value, batch, epoch) in enumerate(zip(bars, best_values, batch_sizes, epochs)):
             plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
                     f'{value:.4f}\nB:{batch}, E:{epoch}', 
-                    ha='center', va='bottom', fontweight='bold', fontsize=9)
+                    ha='center', va='bottom', fontweight='bold', fontsize=14)  # Diubah dari 9 menjadi 14
         
         # Tandai model terbaik GLOBAL jika ada di kombinasi ini
         if (best_model_global['K'] == k and best_model_global['Dropout'] == dropout and best_model_global['Fold'] in available_folds):
@@ -63,13 +63,17 @@ for k in k_values:
             bars[global_fold_idx].set_linewidth(4)
             bars[global_fold_idx].set_facecolor('gold')
         
-        # Detail grafik
-        plt.title(f'Model Terbaik per Fold - K={k}, Dropout={dropout}\n(Test Accuracy Tertinggi untuk Setiap Fold)', 
-                  fontsize=16, fontweight='bold', pad=20)
-        plt.xlabel('Fold', fontsize=12)
-        plt.ylabel('Test Accuracy', fontsize=12)
-        plt.grid(True, linestyle='--', alpha=0.3, axis='y')
-        plt.xticks(available_folds)
+        # Detail grafik - SESUAIKAN DENGAN KODE PERTAMA
+        plt.title(f'Model Terbaik per Fold - K = {k}, Dropout = {dropout}\n(Test Accuracy Tertinggi untuk Setiap Fold)', 
+                  fontsize=18, fontweight='bold', pad=25)  # Diubah dari 16 menjadi 18
+        plt.xlabel('Fold', fontsize=16, fontweight='bold')  # Diubah dari 12 menjadi 16, tambah fontweight
+        plt.ylabel('Test Accuracy', fontsize=16, fontweight='bold')  # Diubah dari 12 menjadi 16, tambah fontweight
+        
+        # Perbesar font angka pada sumbu x dan y - SESUAIKAN
+        plt.xticks(available_folds, fontsize=14)  # Tambah fontsize
+        plt.yticks(fontsize=14)  # Tambah fontsize
+        
+        plt.grid(True, linestyle='--', alpha=0.4, axis='y')  # Sesuaikan alpha dari 0.3 menjadi 0.4
         
         # Atur batas y-axis
         if len(best_values) > 0:
@@ -78,7 +82,7 @@ for k in k_values:
         # Tambahkan informasi di bawah grafik
         plt.figtext(0.5, 0.01, 
                     f"Keterangan: B = Batch Size, E = Epoch | Setiap bar menunjukkan konfigurasi terbaik untuk fold tersebut",
-                    ha="center", fontsize=10, style='italic', bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})
+                    ha="center", fontsize=11, style='italic', bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})  # Diubah dari 10 menjadi 11
         
         plt.tight_layout()
         plt.subplots_adjust(bottom=0.15)

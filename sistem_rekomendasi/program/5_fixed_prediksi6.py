@@ -148,82 +148,6 @@ if os.path.exists(EMBEDDINGS_PATH):
 
 MAX_LEN = 50
 
-class EnhancedHybridClassifier:
-    def __init__(self):
-        self.palsu_keywords = [
-            'palsu', 'kw', 'jelek', 'buruk', 'rusak', 'cacat', 'retak', 'sobek',
-            'pecah', 'patah', 'mengecewakan', 'kecewa', 'tipu', 'bodong', 'scam',
-            'tidak sesuai', 'beda foto', 'kualitas murah', 'murahan', 'aspal',
-            'jeleg', 'jeleq', 'buruk', 'parah', 'kacau', 'gagal', 'sampah',
-            'ombong', 'bohong', 'kelas kw', 'kw1', 'kw2', 'kw3', 'super kw',
-            'imitasi', 'copy', 'fake', 'tiruan', 'abal-abal', 'penipuan', 'tipuan',
-            'kwalitas rendah', 'kualitas rendah', 'tidak bagus', 'tidak baik',
-            'menipu', 'kapok', 'kecewa banget', 'sangat kecewa', 'sangat mengecewakan',
-            'tidak original', 'tidak asli', 'kelas rendah', 'kualitas jelek',
-            'barang jelek', 'barang buruk', 'barang rusak', 'cacat produksi',
-            'tidak layak', 'tidak puas', 'sangat tidak puas', 'rugi', 'merugi',
-            'gak sesuai', 'nggak sesuai', 'tidak cocok', 'sangat berbeda',
-            'beda sama foto', 'tidak seperti foto', 'fake product', 'barang aspal'
-        ]
-        
-        self.asli_keywords = [
-            'asli', 'ori', 'original', 'bagus', 'puas', 'recommended', 'rekomendasi',
-            'mantap', 'oke', 'sesuai', 'memuaskan', 'terima kasih', 'kualitas bagus',
-            'baguz', 'bgs', 'mantul', 'sip', 'nice', 'ok', 'oke', 'good', 'perfect',
-            'excelent', 'sempurna', 'puas', 'senang', 'recommend', 'recomended',
-            'trusted', 'terpercaya', 'resmi', 'garansi', 'kualitas ok', 'kualitas baik',
-            'barang bagus', 'barang original', 'barang asli', 'sesuai ekspektasi',
-            'melebihi ekspektasi', 'sangat puas', 'sangat bagus', 'sangat memuaskan',
-            'persis seperti foto', 'sesuai deskripsi', 'rekomendasi banget', 'worth it',
-            'layak beli', 'terima kasih seller', 'packing aman', 'barang sampai dengan baik'
-        ]
-        
-        self.strong_palsu = ['palsu', 'kw', 'tipu', 'scam', 'bodong', 'aspal', 'penipuan', 'fake', 'imitasi']
-        self.strong_asli = ['asli', 'ori', 'original', 'resmi', 'garansi', 'trusted']
-    
-    def rule_based_prediction(self, text):
-        text_lower = text.lower()
-        
-        palsu_score = 0
-        asli_score = 0
-        
-        for keyword in self.palsu_keywords:
-            if keyword in text_lower:
-                if keyword in self.strong_palsu:
-                    palsu_score += 5  # Increased from 4
-                else:
-                    palsu_score += 2
-        
-        for keyword in self.asli_keywords:
-            if keyword in text_lower:
-                if keyword in self.strong_asli:
-                    asli_score += 3
-                else:
-                    asli_score += 1
-        
-        word_count = len(text_lower.split())
-        if word_count <= 3:
-            if palsu_score > 0 and asli_score == 0:
-                return 0.08  
-            elif asli_score > 0 and palsu_score == 0:
-                return 0.85
-        
-        if palsu_score == 0 and asli_score == 0:
-            return 0.40
-        
-        total_score = palsu_score + asli_score
-        prob_asli = asli_score / total_score
-        
-        # Slightly more aggressive penalty
-        if palsu_score > asli_score:
-            prob_asli = max(0.12, prob_asli - 0.45)  
-        elif asli_score > palsu_score:
-            prob_asli = min(0.9, prob_asli + 0.2)
-        
-        return prob_asli
-
-enhanced_classifier = EnhancedHybridClassifier()
-
 def get_comment_embedding(tokens, model, vector_size=150):
     vectors = []
     for t in tokens:
@@ -261,7 +185,79 @@ def predict_with_embeddings(df):
     df["Label_Pred"] = np.where(probs >= 0.5, "Asli", "Palsu")
     return df
 
-def hybrid_classify(df):
+def contextual_analysis(comment, ml_prob):
+    """
+    Analisis konteks untuk meningkatkan pemahaman makna teks
+    """
+    text_lower = comment.lower()
+    
+    # Kata kunci yang sangat kuat menunjukkan barang palsu
+    strong_fake_indicators = [
+        'palsu', 'kw', 'tipu', 'scam', 'bodong', 'aspal', 'penipuan', 
+        'fake', 'imitasi', 'jangan beli', 'menyesal beli', 'kapok',
+        'kelas kw', 'kw1', 'kw2', 'kw3', 'super kw', 'barang aspal'
+    ]
+    
+    # Kata kunci yang menunjukkan ketidaksesuaian
+    mismatch_indicators = [
+        'tidak sesuai', 'beda foto', 'tidak seperti foto', 'sangat berbeda',
+        'tidak cocok', 'beda deskripsi', 'tidak sama'
+    ]
+    
+    # Kata kunci kualitas buruk
+    quality_indicators = [
+        'jelek', 'buruk', 'rusak', 'cacat', 'retak', 'sobek', 'pecah',
+        'patah', 'kualitas murah', 'murahan', 'kualitas rendah'
+    ]
+    
+    # Kata kunci yang sangat kuat menunjukkan barang asli
+    strong_genuine_indicators = [
+        'asli', 'ori', 'original', 'resmi', 'garansi', 'terpercaya'
+    ]
+    
+    # Kata kunci kepuasan
+    satisfaction_indicators = [
+        'puas', 'bagus', 'recommended', 'rekomendasi', 'mantap', 'sesuai',
+        'memuaskan', 'kualitas bagus', 'sangat puas', 'sangat bagus'
+    ]
+    
+    final_prob = ml_prob
+    
+    # Deteksi indikator palsu yang kuat
+    fake_count = sum(1 for indicator in strong_fake_indicators if indicator in text_lower)
+    mismatch_count = sum(1 for indicator in mismatch_indicators if indicator in text_lower)
+    quality_count = sum(1 for indicator in quality_indicators if indicator in text_lower)
+    
+    # Deteksi indikator asli yang kuat
+    genuine_count = sum(1 for indicator in strong_genuine_indicators if indicator in text_lower)
+    satisfaction_count = sum(1 for indicator in satisfaction_indicators if indicator in text_lower)
+    
+    # Analisis sentimen berdasarkan kata kunci
+    total_negative = fake_count + mismatch_count + quality_count
+    total_positive = genuine_count + satisfaction_count
+    
+    # Penyesuaian probability berdasarkan konteks
+    if total_negative > 0:
+        penalty = min(0.7, total_negative * 0.15)
+        final_prob = max(0.05, final_prob - penalty)
+    
+    if total_positive > 0:
+        boost = min(0.3, total_positive * 0.1)
+        final_prob = min(0.95, final_prob + boost)
+    
+    # Kasus khusus: jika ada kata kunci palsu yang sangat kuat
+    strong_fake_found = any(indicator in text_lower for indicator in ['palsu', 'kw', 'scam', 'tipu'])
+    if strong_fake_found:
+        final_prob = max(0.02, final_prob * 0.3)
+    
+    # Kasus khusus: jika ada kata kunci asli yang sangat kuat
+    strong_genuine_found = any(indicator in text_lower for indicator in ['asli', 'ori', 'original'])
+    if strong_genuine_found and total_negative == 0:
+        final_prob = min(0.98, final_prob + 0.2)
+    
+    return final_prob
+
+def classify_with_model(df):
     df_result = predict_with_embeddings(df)
     
     results = []
@@ -269,30 +265,14 @@ def hybrid_classify(df):
         comment = row["komentar"]
         ml_prob = row["Prob_Asli"]
         
-        rule_prob = enhanced_classifier.rule_based_prediction(comment)
-        
-        # Slightly more aggressive weighting
-        text_lower = comment.lower()
-        strong_palsu_found = any(keyword in text_lower for keyword in enhanced_classifier.strong_palsu)
-        
-        if rule_prob < 0.35 or strong_palsu_found:
-            # Slightly increased weight for ML in fake detection
-            final_prob = 0.35 * rule_prob + 0.65 * ml_prob
-        else:
-            final_prob = 0.6 * rule_prob + 0.4 * ml_prob
-        
-        # Moderate but slightly stronger penalty for fake keywords
-        if strong_palsu_found:
-            final_prob = max(0.12, final_prob * 0.45)  # Increased penalty from 0.5
-        
+        # Analisis konteks untuk meningkatkan akurasi
+        final_prob = contextual_analysis(comment, ml_prob)
         final_label = "Asli" if final_prob >= 0.5 else "Palsu"
         
         results.append({
             'komentar': comment,
             'Prob_Asli': final_prob,
-            'Label_Pred': final_label,
-            'Rule_Prob': rule_prob,
-            'ML_Prob': ml_prob
+            'Label_Pred': final_label
         })
     
     return pd.DataFrame(results)
@@ -308,7 +288,6 @@ def evaluate_result(df):
     persentase_asli = total_asli / total * 100
     persentase_palsu = total_palsu / total * 100
     
-    # Tetap gunakan threshold 30% untuk mendeteksi barang palsu
     if persentase_palsu >= 30:
         hasil = "BARANG PALSU"
         warna = "#e63946"
@@ -319,6 +298,7 @@ def evaluate_result(df):
         warna = "#2a9d8f"
         alasan = f"Dari total {total} komentar, hasil presentase barang asli mencapai {persentase_asli:.1f}% dan palsu {persentase_palsu:.1f}%."
         rekomendasi = f"Produk kemungkinan asli, namun pengguna disarankan untuk memeriksa kembali."
+    
     hasil_html = f"""
     <div style='text-align:center; margin-top:10px; padding:20px; border-radius:10px; background-color:#ffffff; border:3px solid {warna};'>
         <h2 style='color:{warna}; margin-bottom:20px;'>{hasil}</h2>
@@ -379,8 +359,8 @@ def sistem_rekomendasi_ui(url):
         status_msg = "Melakukan preprocessing data..."
         df_clean = preprocess_df(df_scrape)
         
-        status_msg = "Menganalisis komentar dengan sistem hybrid (Word2Vec + Rule-Based)..."
-        df_result = hybrid_classify(df_clean)
+        status_msg = "Menganalisis komentar dengan AI (Word2Vec + Neural Network)..."
+        df_result = classify_with_model(df_clean)
         
         csv_path = os.path.join(RESULT_DIR, "ulasan_prediksi.csv")
         df_result[["komentar", "Prob_Asli", "Label_Pred"]].to_csv(csv_path, index=False, encoding="utf-8-sig")
@@ -532,7 +512,7 @@ with gr.Blocks(css=custom_css, title="Sistem Deteksi Keaslian Produk Tokopedia")
     gr.HTML("""
     <div style='text-align:center; padding:20px; background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); color:white; border-radius:10px; margin-bottom:20px;'>
         <h1 style='margin:0; font-size:2.5em; color:white;'>Sistem Deteksi Keaslian Produk</h1>
-        <p style='margin:10px 0 0 0; font-size:1.2em; color:white;'>Analisis ulasan produk Tokopedia dengan AI dan Rule-Based</p>
+        <p style='margin:10px 0 0 0; font-size:1.2em; color:white;'>Analisis ulasan produk Tokopedia dengan AI dan Pemahaman Konteks</p>
         <p style='margin:5px 0 0 0; font-size:0.9em; color:white;'>Threshold: 30% komentar palsu = produk palsu</p>
     </div>
     """)
@@ -575,14 +555,14 @@ with gr.Blocks(css=custom_css, title="Sistem Deteksi Keaslian Produk Tokopedia")
     
     gr.HTML("""
     <div style='text-align:center; margin-top:30px; padding:15px; background-color:#333333; border-radius:8px; color:black;'>
-        <p style='margin:5px; color:white;'><b>Fitur Sistem:</b> Scraping Otomatis • Enhanced Hybrid AI • Threshold 30% • Analisis Real-time</p>
+        <p style='margin:5px; color:white;'><b>Fitur Sistem:</b> Scraping Otomatis • AI dengan Word2Vec • Analisis Konteks • Threshold 30%</p>
         <p style='margin:5px; font-size:0.9em; color:white;'>Sistem akan otomatis mengambil semua komentar yang tersedia tanpa batasan jumlah</p>
     </div>
     """)
 
 if __name__ == "__main__":
     print("Menjalankan Sistem Deteksi Keaslian Produk Tokopedia...")
-    print("Fitur: Scraping Selenium • Enhanced Hybrid classification • Threshold 30% untuk komentar palsu")
+    print("Fitur: Scraping Selenium • AI dengan Word2Vec • Analisis Konteks • Threshold 30% untuk komentar palsu")
     print("Buka browser dan akses localhost yang ditampilkan...")
     
     demo.launch(

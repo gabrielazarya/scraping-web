@@ -17,11 +17,11 @@ print(f"Setelah hapus duplikat: {len(df)} data unik")
 def clean_text(teks):
     if not isinstance(teks, str):
         return ''
-    teks = emoji.replace_emoji(teks, replace='')  # hapus emoji penuh
-    teks = re.sub(r'#(\w+)', r'\1', teks)         # hapus tanda pagar #
-    teks = re.sub(r'@(\w+)', r'\1', teks)         # hapus mention @
-    teks = re.sub(r'[^\w\s]', ' ', teks)          # hapus simbol selain huruf/angka/underscore/spasi
-    teks = re.sub(r'\s+', ' ', teks).strip()      # hapus spasi berlebih
+    teks = emoji.replace_emoji(teks, replace='')  
+    teks = re.sub(r'#(\w+)', r'\1', teks)         
+    teks = re.sub(r'@(\w+)', r'\1', teks)         
+    teks = re.sub(r'[^\w\s]', ' ', teks)
+    teks = re.sub(r'\s+', ' ', teks).strip() 
     return teks
 
 df['cleaned_text'] = df[kolom_komentar].apply(clean_text)
